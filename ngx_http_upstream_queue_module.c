@@ -68,6 +68,18 @@ static void ngx_http_upstream_queue_timeout_handler(ngx_event_t *e) {
     ngx_http_upstream_finalize_request(r, u, NGX_HTTP_GATEWAY_TIME_OUT);
 }
 
+static void ngx_http_upstream_queue_finalize_event_handler(ngx_event_t *e)
+{
+    ngx_http_request_t *r = e->data;
+    ngx_log_error(NGX_LOG_WARN, e->log, 0, "queue full: finalizing request with 503");
+    if (!r->connection || r->connection->error) {
+        ngx_log_error(NGX_LOG_ERR, e->log, 0, "request already gone, abort finalize");
+        return;
+    }
+    ngx_http_upstream_t *u = r->upstream;
+    ngx_http_upstream_finalize_request(r, u, NGX_HTTP_SERVICE_UNAVAILABLE);
+}
+
 static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, void *data) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "%s", __func__);
     ngx_http_upstream_queue_data_t *d = data;
@@ -78,9 +90,22 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     ngx_http_upstream_t *u = r->upstream;
     ngx_http_upstream_srv_conf_t *uscf = u->conf->upstream;
     ngx_http_upstream_queue_srv_conf_t *qscf = ngx_http_conf_upstream_srv_conf(uscf, ngx_http_upstream_queue_module);
-    if (queue_size(&qscf->queue) >= qscf->max) return rc;
+    
     if (!(pc->connection = ngx_get_connection(0, pc->log))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_get_connection"); return NGX_ERROR; }
     pc->connection->shared = 1;
+
+    if (queue_size(&qscf->queue) >= qscf->max) {
+        ngx_event_t *ev;
+        ev = ngx_pcalloc(r->pool, sizeof(*ev));
+        if (ev == NULL) {
+            return NGX_ERROR;
+        }
+        ev->handler = ngx_http_upstream_queue_finalize_event_handler;
+        ev->data    = r;
+        ev->log     = r->connection->log;
+        ngx_post_event(ev, &ngx_posted_events);
+        return NGX_AGAIN;
+    }
     ngx_pool_cleanup_t *cln;
     if (!(cln = ngx_pool_cleanup_add(r->pool, 0))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_pool_cleanup_add"); return NGX_ERROR; }
     cln->handler = ngx_http_upstream_queue_cleanup_handler;
