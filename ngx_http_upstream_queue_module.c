@@ -100,8 +100,8 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
             }
             /* peer is not down */
             ngx_log_error(NGX_LOG_ERR, log, 0,
-                          "upstream peer still up: name=\"%V\" socklen=%d fails=%ui max_fails=%ui last_accessed=%ui fail_timeout=%ui",
-                          &p->name, (int) p->socklen, p->fails, p->max_fails, now - (ngx_msec_t)p->accessed, (ngx_msec_t)p->fail_timeout);
+                          "upstream peer still up: name=\"%V\" socklen=%d fails=%ui max_fails=%ui now=%ui accessed=%ui fail_timeout=%ui",
+                          &p->name, (int) p->socklen, p->fails, p->max_fails, now, (ngx_msec_t)p->accessed, (ngx_msec_t)p->fail_timeout);
             return 0;
         }
     }
