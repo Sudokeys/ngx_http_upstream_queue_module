@@ -90,8 +90,14 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
         return -2;
     }
     ngx_http_upstream_rr_peer_t *p;
+    ngx_msec_t now = ngx_current_msec;
     for (p = rr->peers->peer; p; p = p->next) {
         if (!p->down) {
+            if (p->max_fails && p->fails >= p->max_fails
+                && (now - p->accessed) < p->fail_timeout)
+            {
+                continue; /* set as down */
+            }
             /* peer is not down */
             ngx_log_error(NGX_LOG_ERR, log, 0,
                           "upstream peer still up: name=\"%V\" socklen=%d fails=%ui max_fails=%ui",
