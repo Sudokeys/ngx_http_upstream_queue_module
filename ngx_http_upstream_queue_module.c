@@ -87,16 +87,16 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
     }
     ngx_http_upstream_rr_peer_data_t *rr = d->peer.data;
     if (rr == NULL || rr->peers == NULL || rr->peers->peer == NULL) {
-        return -1;
+        return -2;
     }
     ngx_http_upstream_rr_peer_t *p;
     for (p = rr->peers->peer; p; p = p->next) {
         if (!p->down) {
-            /* Au moins un peer n'est pas marqué down -> on n'est pas dans le cas "tous down" */
+            /* peer is not down */
             return 0;
         }
     }
-    /* Tous les peers sont marqués down */
+    /* All peers are down */
     return 1;
 }
 
@@ -108,6 +108,7 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     
     if (rc != NGX_BUSY) return rc;
     ngx_int_t all_down = ngx_http_upstream_queue_all_peers_down(d);
+    if (all_down < 0) ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_http_upstream_queue_all_peers_down = %i", all_down);
     if (all_down == 1) return rc;
 
     ngx_http_request_t *r = d->request;
