@@ -10,6 +10,30 @@ typedef struct queue_t {
     struct queue_t *next;
 } queue_t;
 
+/* rr core struct */
+typedef struct ngx_http_upstream_rr_peer_s  ngx_http_upstream_rr_peer_t;
+typedef struct {
+    ngx_uint_t                     number;
+    ngx_flag_t                     single;
+    ngx_http_upstream_rr_peer_t   *peer;
+} ngx_http_upstream_rr_peers_t;
+typedef struct {
+    ngx_http_upstream_rr_peers_t  *peers;
+    ngx_http_upstream_rr_peer_t   *peer;
+    ngx_uint_t                    tried;
+} ngx_http_upstream_rr_peer_data_t;
+typedef struct ngx_http_upstream_rr_peer_s {
+    ngx_sockaddr_t                 sockaddr;
+    socklen_t                      socklen;
+    ngx_str_t                      name;
+    ngx_uint_t                     fails;
+    ngx_msec_t                     accessed;
+    ngx_uint_t                     max_fails;
+    ngx_msec_t                     fail_timeout;
+    ngx_uint_t                     down;
+    ngx_http_upstream_rr_peer_t   *next;
+} ngx_http_upstream_rr_peer_s;
+
 #define queue_parent(q) (q)->parent
 
 #define queue_size(q) (q)->size

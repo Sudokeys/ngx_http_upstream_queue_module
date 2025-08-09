@@ -80,12 +80,36 @@ static void ngx_http_upstream_queue_finalize_event_handler(ngx_event_t *e)
     ngx_http_upstream_finalize_request(r, u, NGX_HTTP_SERVICE_UNAVAILABLE);
 }
 
+ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t *d)
+{
+    if (d == NULL || d->peer.data == NULL) {
+        return -1;
+    }
+    ngx_http_upstream_rr_peer_data_t *rr = d->peer.data;
+    if (rr == NULL || rr->peers == NULL || rr->peers->peer == NULL) {
+        return -1;
+    }
+    ngx_http_upstream_rr_peer_t *p;
+    for (p = rr->peers->peer; p; p = p->next) {
+        if (!p->down) {
+            /* Au moins un peer n'est pas marqué down -> on n'est pas dans le cas "tous down" */
+            return 0;
+        }
+    }
+    /* Tous les peers sont marqués down */
+    return 1;
+}
+
 static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, void *data) {
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "%s", __func__);
     ngx_http_upstream_queue_data_t *d = data;
     ngx_int_t rc = d->peer.get(pc, d->peer.data);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "peer.get = %i", rc);
+    
     if (rc != NGX_BUSY) return rc;
+    ngx_int_t all_down = ngx_http_upstream_queue_all_peers_down(d);
+    if (all_down == 1) return rc;
+
     ngx_http_request_t *r = d->request;
     ngx_http_upstream_t *u = r->upstream;
     ngx_http_upstream_srv_conf_t *uscf = u->conf->upstream;
