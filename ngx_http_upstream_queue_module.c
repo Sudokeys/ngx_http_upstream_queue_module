@@ -94,7 +94,7 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
     for (p = rr->peers->peer; p; p = p->next) {
         if (!p->down) {
             if (p->max_fails && p->fails >= p->max_fails
-                && (now_sec - p->accessed) <= (time_t)p->fail_timeout))
+                && (now_sec - p->accessed) <= (time_t)p->fail_timeout)
             {
                 continue; /* set as down */
             }
