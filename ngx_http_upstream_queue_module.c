@@ -93,8 +93,10 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
     ngx_msec_t now = ngx_current_msec;
     for (p = rr->peers->peer; p; p = p->next) {
         if (!p->down) {
+            accessed_ms = (ngx_msec_t)p->accessed * 1000;
+            fail_timeout_ms = (ngx_msec_t)p->fail_timeout * 1000;
             if (p->max_fails && p->fails >= p->max_fails
-                && (now - (ngx_msec_t)p->accessed) < (ngx_msec_t)p->fail_timeout)
+                && (now - accessed_ms) < fail_timeout_ms)
             {
                 continue; /* set as down */
             }
