@@ -80,7 +80,7 @@ static void ngx_http_upstream_queue_finalize_event_handler(ngx_event_t *e)
     ngx_http_upstream_finalize_request(r, u, NGX_HTTP_SERVICE_UNAVAILABLE);
 }
 
-ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t *d)
+ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t *d, ngx_log_t *log)
 {
     if (d == NULL || d->peer.data == NULL) {
         return -1;
@@ -93,6 +93,9 @@ ngx_int_t ngx_http_upstream_queue_all_peers_down(ngx_http_upstream_queue_data_t 
     for (p = rr->peers->peer; p; p = p->next) {
         if (!p->down) {
             /* peer is not down */
+            ngx_log_error(NGX_LOG_ERR, log, 0,
+                          "upstream peer still up: name=\"%V\" socklen=%d fails=%ui max_fails=%ui",
+                          &p->name, (int) p->socklen, p->fails, p->max_fails);
             return 0;
         }
     }
@@ -107,7 +110,7 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "peer.get = %i", rc);
     
     if (rc != NGX_BUSY) return rc;
-    ngx_int_t all_down = ngx_http_upstream_queue_all_peers_down(d);
+    ngx_int_t all_down = ngx_http_upstream_queue_all_peers_down(d, pc->log);
     if (all_down < 0) ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_http_upstream_queue_all_peers_down = %i", all_down);
     if (all_down == 1) return rc;
 
