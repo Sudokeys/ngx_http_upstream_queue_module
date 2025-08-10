@@ -72,7 +72,7 @@ static void ngx_http_upstream_queue_timeout_handler(ngx_event_t *e) {
 static void ngx_http_upstream_queue_finalize_event_handler(ngx_event_t *e)
 {
     ngx_http_request_t *r = e->data;
-    ngx_log_error(NGX_LOG_WARN, e->log, 0, "queue full: finalizing request with 503");
+    ngx_log_error(NGX_LOG_NOTICE, e->log, 0, "queue full: finalizing request with 503");
     if (!r->connection || r->connection->error) {
         ngx_log_error(NGX_LOG_ERR, e->log, 0, "request already gone, abort finalize");
         return;
