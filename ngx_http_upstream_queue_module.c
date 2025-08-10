@@ -8,6 +8,7 @@ typedef struct {
     ngx_http_upstream_peer_t peer;
     ngx_msec_t timeout;
     ngx_uint_t max;
+    ngx_uint_t queue_blocked;
     queue_t queue;
 } ngx_http_upstream_queue_srv_conf_t;
 
@@ -105,7 +106,18 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     if (!(pc->connection = ngx_get_connection(0, pc->log))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_get_connection"); return NGX_ERROR; }
     pc->connection->shared = 1;
 
-    if (queue_size(&qscf->queue) >= qscf->max) {
+    ngx_uint_t qsize = queue_size(&qscf->queue);
+    if (qscf->queue_blocked) {
+        if (qsize < (qscf->max * 75) / 100) {
+            qscf->queue_blocked = 0;
+        }
+    } else {
+        if (qsize >= qscf->max) {
+            qscf->queue_blocked = 1;
+        }
+    }
+
+    if (qscf->queue_blocked) {
         ngx_event_t *ev;
         ev = ngx_pcalloc(r->pool, sizeof(*ev));
         if (ev == NULL) {
@@ -182,6 +194,7 @@ static void *ngx_http_upstream_queue_create_srv_conf(ngx_conf_t *cf) {
     ngx_http_upstream_queue_srv_conf_t *conf;
     if (!(conf = ngx_pcalloc(cf->pool, sizeof(*conf)))) return NULL;
     conf->timeout = NGX_CONF_UNSET_MSEC;
+    conf->queue_blocked = 0;
     return conf;
 }
 
