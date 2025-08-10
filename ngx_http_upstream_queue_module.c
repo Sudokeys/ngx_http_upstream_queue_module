@@ -9,6 +9,7 @@ typedef struct {
     ngx_msec_t timeout;
     ngx_uint_t max;
     ngx_uint_t queue_blocked;
+    ngx_uint_t queue_threshold;
     queue_t queue;
 } ngx_http_upstream_queue_srv_conf_t;
 
@@ -108,7 +109,7 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
 
     ngx_uint_t qsize = queue_size(&qscf->queue);
     if (qscf->queue_blocked) {
-        if (qsize < (qscf->max * 75) / 100) {
+        if (qsize < (qscf->max * qscf->queue_threshold) / 100) {
             qscf->queue_blocked = 0;
         }
     } else {
@@ -195,6 +196,7 @@ static void *ngx_http_upstream_queue_create_srv_conf(ngx_conf_t *cf) {
     if (!(conf = ngx_pcalloc(cf->pool, sizeof(*conf)))) return NULL;
     conf->timeout = NGX_CONF_UNSET_MSEC;
     conf->queue_blocked = 0;
+    conf->queue_threshold = 75;
     return conf;
 }
 
@@ -206,12 +208,29 @@ static char *ngx_http_upstream_queue_ups_conf(ngx_conf_t *cf, ngx_command_t *cmd
     if (n == NGX_ERROR || !n) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid value \"%V\" in \"%V\" directive", &value[1], &cmd->name); return NGX_CONF_ERROR; }
     qscf->max = n;
     if (cf->args->nelts > 2) {
-        if (value[2].len <= sizeof("timeout=") - 1 || ngx_strncmp(value[2].data, (u_char *)"timeout=", sizeof("timeout=") - 1)) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid name \"%V\" in \"%V\" directive", &value[2], &cmd->name); return NGX_CONF_ERROR; }
-        value[2].data += sizeof("timeout=") - 1;
-        value[2].len -= sizeof("timeout=") - 1;
-        ngx_int_t n = ngx_parse_time(&value[2], 0);
-        if (n == NGX_ERROR) return "ngx_parse_time == NGX_ERROR";
-        qscf->timeout = (ngx_msec_t)n;
+        for (ngx_uint_t i = 2; i < cf->args->nelts; i++) {
+            if (value[i].len > sizeof("timeout=") - 1 &&
+                ngx_strncmp(value[i].data, (u_char *)"timeout=", sizeof("timeout=") - 1) == 0) {
+                value[i].data += sizeof("timeout=") - 1;
+                value[i].len -= sizeof("timeout=") - 1;
+                ngx_int_t n = ngx_parse_time(&value[i], 0);
+                if (n == NGX_ERROR) return "invalid timeout value";
+                qscf->timeout = (ngx_msec_t)n;
+            }
+            else if (value[i].len > sizeof("threshold=") - 1 &&
+                    ngx_strncmp(value[i].data, (u_char *)"threshold=", sizeof("threshold=") - 1) == 0) {
+                value[i].data += sizeof("threshold=") - 1;
+                value[i].len -= sizeof("threshold=") - 1;
+                ngx_int_t pct = ngx_atoi(value[i].data, value[i].len);
+                if (pct == NGX_ERROR || pct <= 0 || pct > 100) {
+                    return "invalid threshold percentage";
+                }
+                qscf->queue_threshold = (ngx_uint_t)pct;
+            }
+            else {
+                return "invalid parameter";
+            }
+        }
     }
     ngx_http_upstream_srv_conf_t *uscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_module);
     qscf->peer.init_upstream = uscf->peer.init_upstream ? uscf->peer.init_upstream : ngx_http_upstream_init_round_robin;
