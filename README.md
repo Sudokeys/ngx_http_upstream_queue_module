@@ -13,3 +13,11 @@ If an upstream server cannot be selected immediately while processing a request,
 The default value of the timeout parameter is 60 seconds.
 
 When using load balancer methods other than the default round-robin method, it is necessary to activate them before the queue directive.
+
+queue_detect_all_peer_down;
+-------------
+* Syntax: queue_detect_all_peer_down on | off;
+* Default: off
+* Context: upstream
+
+Enables/disables detect all peer down
