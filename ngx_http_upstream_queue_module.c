@@ -55,6 +55,12 @@ static void ngx_http_upstream_queue_cleanup_handler(void *data) {
     if (!queue_empty(&d->queue)) queue_remove(&d->queue);
     if (d->connect_timeout.timer_set) ngx_del_timer(&d->connect_timeout);
     if (d->timeout.timer_set) ngx_del_timer(&d->timeout);
+    ngx_connection_t *dummy = d->request->upstream->peer.connection;
+    if (dummy && dummy->shared) {
+        dummy->shared = 0;
+        ngx_close_connection(dummy);
+        d->request->upstream->peer.connection = NULL;
+    }
 }
 
 static void ngx_http_upstream_queue_connect_timeout_handler(ngx_event_t *e) {
