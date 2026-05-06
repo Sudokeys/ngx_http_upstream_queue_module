@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
     ngx_event_t connect_timeout;
     ngx_event_t timeout;
+    ngx_flag_t cleanup_added;
     ngx_http_request_t *request;
     ngx_peer_connection_t peer;
     queue_t queue;
@@ -40,8 +41,10 @@ static void ngx_http_upstream_queue_peer_free(ngx_peer_connection_t *pc, void *d
     r = d->request;
     u = r->upstream;
     ngx_connection_t *c = u->peer.connection;
-    ngx_close_connection(c);
-    c->shared = 0;
+    if (c) {
+        ngx_close_connection(c);
+        u->peer.connection = NULL;
+    }
     ngx_http_upstream_handler_pt read_event_handler = u->read_event_handler;
     ngx_http_upstream_handler_pt write_event_handler = u->write_event_handler;
     ngx_http_upstream_connect(r, u);
@@ -72,7 +75,6 @@ static void ngx_http_upstream_queue_connect_timeout_handler(ngx_event_t *e) {
 static void ngx_http_upstream_queue_timeout_handler(ngx_event_t *e) {
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->log, 0, e->write ? "write" : "read");
     ngx_http_request_t *r = e->data;
-    if (!r->connection || r->connection->error) return;
     ngx_http_upstream_t *u = r->upstream;
     ngx_http_upstream_finalize_request(r, u, NGX_HTTP_GATEWAY_TIME_OUT);
 }
@@ -81,10 +83,6 @@ static void ngx_http_upstream_queue_finalize_event_handler(ngx_event_t *e)
 {
     ngx_http_request_t *r = e->data;
     ngx_log_error(NGX_LOG_NOTICE, e->log, 0, "queue full: finalizing request with 503");
-    if (!r->connection || r->connection->error) {
-        ngx_log_error(NGX_LOG_ERR, e->log, 0, "request already gone, abort finalize");
-        return;
-    }
     ngx_http_upstream_t *u = r->upstream;
     ngx_http_upstream_finalize_request(r, u, NGX_HTTP_SERVICE_UNAVAILABLE);
 }
@@ -116,6 +114,18 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     if (!(pc->connection = ngx_get_connection(0, pc->log))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_get_connection"); return NGX_ERROR; }
     pc->connection->shared = 1;
 
+    if (!d->cleanup_added) {
+        ngx_pool_cleanup_t *cln;
+        if (!(cln = ngx_pool_cleanup_add(r->pool, 0))) { 
+            ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_pool_cleanup_add"); 
+            ngx_close_connection(pc->connection);
+            return NGX_ERROR; 
+        }
+        cln->handler = ngx_http_upstream_queue_cleanup_handler;
+        cln->data = d;
+        d->cleanup_added = 1;
+    }
+
     ngx_uint_t qsize = queue_size(&qscf->queue);
     if (qscf->queue_blocked) {
         if (qsize < (qscf->max * qscf->queue_threshold) / 100) {
@@ -139,10 +149,6 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
         ngx_post_event(ev, &ngx_posted_events);
         return NGX_AGAIN;
     }
-    ngx_pool_cleanup_t *cln;
-    if (!(cln = ngx_pool_cleanup_add(r->pool, 0))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_pool_cleanup_add"); return NGX_ERROR; }
-    cln->handler = ngx_http_upstream_queue_cleanup_handler;
-    cln->data = d;
     if (u->conf->connect_timeout < qscf->timeout) {
         d->connect_timeout.data = pc->connection;
         d->connect_timeout.handler = ngx_http_upstream_queue_connect_timeout_handler;
