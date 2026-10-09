@@ -38,7 +38,7 @@ if (!-x $nginx || !-e $module) {
 my $testdir = tempdir('nginx-queue-directive-XXXXXXXXXX', TMPDIR => 1,
 	CLEANUP => 1);
 
-plan(tests => 26);
+plan(tests => 35);
 
 is(conf_test("queue 10;"), 0, 'queue N: valid, minimal form');
 is(conf_test("queue 10 timeout=30s;"), 0, 'queue N timeout=T: valid form');
@@ -69,6 +69,22 @@ isnt(conf_test("queue 10 retry_interval=abc;"), 0,
 	'queue N retry_interval=<not a time>: rejected');
 isnt(conf_test("queue 10 retry_interval=0;"), 0,
 	'queue N retry_interval=0: rejected');
+is(conf_test("queue 10 threshold=50;"), 0, 'queue N threshold=P: valid form');
+is(conf_test("queue 10 threshold=100;"), 0,
+	'queue N threshold=100: valid form');
+is(conf_test("queue 10 timeout=30s retry_interval=50ms threshold=50;"), 0,
+	'queue N timeout=T retry_interval=I threshold=P: all three together');
+isnt(conf_test("queue 10 threshold=;"), 0,
+	'queue N threshold=<empty>: rejected');
+isnt(conf_test("queue 10 threshold=abc;"), 0,
+	'queue N threshold=<non-numeric>: rejected');
+isnt(conf_test("queue 10 threshold=0;"), 0, 'queue N threshold=0: rejected');
+isnt(conf_test("queue 10 threshold=101;"), 0,
+	'queue N threshold=<over 100>: rejected');
+isnt(conf_test("queue 10 threshold=50 threshold=60;"), 0,
+	'queue N threshold= given twice: rejected');
+isnt(conf_test("queue 10 threshold=-5;"), 0,
+	'queue N threshold=<negative>: rejected');
 isnt(conf_test("queue 10 badparam=5s;"), 0,
 	'queue N <unknown param>=...: rejected');
 isnt(conf_test("queue 10 timeout=30s badparam=1;"), 0,

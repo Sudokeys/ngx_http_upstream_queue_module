@@ -179,7 +179,7 @@ $t->run();
 
 ###############################################################################
 # 2: queue N - once the queue is at capacity, further requests are
-# rejected immediately (502), not queued.
+# rejected immediately (503), not queued.
 ###############################################################################
 
 {
@@ -194,7 +194,7 @@ $t->run();
 	my $resp = read_response($y, 2);
 	my $elapsed = time() - $start;
 
-	like($resp, qr!^HTTP/1\.[01] 502 !, 'queue full: extra request gets 502');
+	like($resp, qr!^HTTP/1\.[01] 503 !, 'queue full: extra request gets 503');
 	ok($elapsed < 1, 'queue full: rejection is immediate, not queued')
 		or diag("elapsed: $elapsed");
 }
@@ -276,7 +276,7 @@ $t->run();
 
 	# queue is "1" for this upstream, so if the aborted request's slot
 	# was not reclaimed, this next one would be bounced immediately with
-	# a "queue full" 502 instead of actually queueing.
+	# a "queue full" 503 instead of actually queueing.
 	my $r = send_request('/abort/R');
 	my $sel = IO::Select->new($r);
 	my @ready = $sel->can_read(0.4);

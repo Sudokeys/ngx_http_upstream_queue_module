@@ -12,11 +12,11 @@ and loaded with `load_module modules/ngx_http_upstream_queue_module.so;`. `--add
 
 queue
 -------------
-* Syntax: **queue** *number* [ timeout=*time* ] [ retry_interval=*time* ]
+* Syntax: **queue** *number* [ timeout=*time* ] [ retry_interval=*time* ] [ threshold=*percent* ]
 * Default: --
 * Context: upstream
 
-If an upstream server cannot be selected immediately while processing a request, the request will be placed into the queue. The directive specifies the maximum *number* of requests that can be in the queue at the same time. If the queue is filled up, the 502 (Bad Gateway) error will be returned to the client. If the server to pass the request to cannot be selected within the time period specified in the timeout parameter, the 504 (Gateway Time-out) error will be returned to the client, and an "upstream queue timed out" error is logged.
+If an upstream server cannot be selected immediately while processing a request, the request will be placed into the queue. The directive specifies the maximum *number* of requests that can be in the queue at the same time. If the queue is filled up, the 503 (Service Unavailable) error will be returned to the client. If the server to pass the request to cannot be selected within the time period specified in the timeout parameter, the 504 (Gateway Time-out) error will be returned to the client, and an "upstream queue timed out" error is logged.
 
 The queue, and so the *number* limit, is kept by each worker process separately: with `worker_processes 4;` and `queue 10;`, up to 40 requests can be queued in total. A queued request waits in the worker that accepted it. It is woken right away when a connection in that same worker frees a slot; a slot freed by another worker (with a shared `zone`, where `max_conns` and failures are counted across workers) is only noticed by the retry timer, every retry_interval.
 
@@ -24,7 +24,11 @@ Queued requests are served in order, except that a request that cannot use the s
 
 The default value of the timeout parameter is 60 seconds.
 
-The retry_interval parameter controls how often a queued request is re-checked when nothing else has woken it in the meantime (see "Compatibility with `resolve`" below for what that covers). The default is 200 milliseconds. timeout= and retry_interval= may be given in either order.
+The retry_interval parameter controls how often a queued request is re-checked when nothing else has woken it in the meantime (see "Compatibility with `resolve`" below for what that covers). The default is 200 milliseconds.
+
+The threshold parameter sets, as a percentage of *number* (1 to 100), how far the queue has to drain after filling up before it accepts requests again; until then every request that cannot get a server immediately is answered with 503. The default is 75. With threshold=100 the queue reopens as soon as a single place frees up.
+
+The parameters may be given in any order.
 
 When using load balancer methods other than the default round-robin method, it is necessary to activate them before the queue directive.
 

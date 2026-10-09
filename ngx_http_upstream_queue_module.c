@@ -13,8 +13,10 @@ typedef struct {
     ngx_http_upstream_peer_t peer;
     ngx_msec_t timeout;
     ngx_msec_t retry_interval;
+    ngx_uint_t blocked;
     ngx_uint_t max;
     ngx_uint_t size;
+    ngx_uint_t threshold;
     ngx_queue_t queue;
     ngx_event_t retry;
 } ngx_http_upstream_queue_srv_conf_t;
@@ -32,6 +34,7 @@ typedef struct {
     ngx_http_upstream_rr_peer_data_t rrp;
 #endif
     ngx_event_t connect_timeout;
+    ngx_event_t full;
     ngx_event_t timeout;
     ngx_event_t posted;
     ngx_http_request_t *request;
@@ -417,6 +420,7 @@ static void ngx_http_upstream_queue_cleanup_handler(void *data) {
      */
     ngx_http_upstream_queue_unlink(d);
     if (d->posted.posted) { ngx_delete_posted_event(&d->posted); }
+    if (d->full.posted) { ngx_delete_posted_event(&d->full); }
 }
 
 static void ngx_http_upstream_queue_connect_timeout_handler(ngx_event_t *e) {
@@ -445,6 +449,18 @@ static void ngx_http_upstream_queue_timeout_handler(ngx_event_t *e) {
      * to run it. Left posted, the request would never close, never leave
      * the queue, and later be retried half torn down.
      */
+    ngx_http_run_posted_requests(c);
+}
+
+static void ngx_http_upstream_queue_full_handler(ngx_event_t *e) {
+    ngx_http_upstream_queue_data_t *d = e->data;
+    ngx_http_upstream_queue_unlink(d);
+    if (ngx_http_upstream_queue_finalized(d)) return;
+    ngx_http_request_t *r = d->request;
+    ngx_connection_t *c = r->connection;
+    ngx_log_error(NGX_LOG_NOTICE, e->log, 0, "queue full: finalizing request with 503");
+    ngx_http_upstream_t *u = r->upstream;
+    ngx_http_upstream_finalize_request(r, u, NGX_HTTP_SERVICE_UNAVAILABLE);
     ngx_http_run_posted_requests(c);
 }
 
@@ -503,7 +519,6 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
         ngx_http_upstream_rr_peers_unlock(rrp->peers);
         if (all_peers_down) return rc;
     }
-    if (qscf->size >= qscf->max) return rc;
     if (!(pc->connection = ngx_get_connection(0, pc->log))) { ngx_log_error(NGX_LOG_ERR, pc->log, 0, "!ngx_get_connection"); return NGX_ERROR; }
     pc->connection->shared = 1;
     ngx_pool_cleanup_t *cln;
@@ -517,6 +532,29 @@ static ngx_int_t ngx_http_upstream_queue_peer_get(ngx_peer_connection_t *pc, voi
     }
     cln->handler = ngx_http_upstream_queue_cleanup_handler;
     cln->data = d;
+    /*
+     * Once the queue has filled up it stays closed until it has drained
+     * below threshold percent of its size, so a saturated upstream sheds
+     * load steadily instead of flapping at the limit.
+     */
+    if (qscf->blocked) {
+        if (qscf->size * 100 < qscf->max * qscf->threshold) qscf->blocked = 0;
+    } else if (qscf->size >= qscf->max) {
+        qscf->blocked = 1;
+    }
+    if (qscf->blocked) {
+        /*
+         * Returning NGX_BUSY here would surface as 502; answer 503
+         * instead. The request cannot be finalized from inside
+         * peer.get(), so park it on the placeholder connection and
+         * finalize from a posted event.
+         */
+        d->full.data = d;
+        d->full.handler = ngx_http_upstream_queue_full_handler;
+        d->full.log = r->connection->log;
+        ngx_post_event(&d->full, &ngx_posted_events);
+        return NGX_AGAIN;
+    }
     if (u->conf->connect_timeout <= qscf->timeout) {
         d->connect_timeout.data = d;
         d->connect_timeout.handler = ngx_http_upstream_queue_connect_timeout_handler;
@@ -771,6 +809,7 @@ static ngx_int_t ngx_http_upstream_queue_peer_init_upstream(ngx_conf_t *cf, ngx_
     ngx_conf_init_value(qscf->detect, 0);
     ngx_conf_init_msec_value(qscf->timeout, 60000);
     ngx_conf_init_msec_value(qscf->retry_interval, 200);
+    ngx_conf_init_uint_value(qscf->threshold, 75);
     if (qscf->peer.init_upstream(cf, uscf) != NGX_OK) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "init_upstream != NGX_OK"); return NGX_ERROR; }
     qscf->peer.init = uscf->peer.init;
     uscf->peer.init = ngx_http_upstream_queue_peer_init;
@@ -784,6 +823,7 @@ static void *ngx_http_upstream_queue_create_srv_conf(ngx_conf_t *cf) {
     conf->detect = NGX_CONF_UNSET;
     conf->timeout = NGX_CONF_UNSET_MSEC;
     conf->retry_interval = NGX_CONF_UNSET_MSEC;
+    conf->threshold = NGX_CONF_UNSET_UINT;
     return conf;
 }
 
@@ -813,6 +853,13 @@ static char *ngx_http_upstream_queue_ups_conf(ngx_conf_t *cf, ngx_command_t *cmd
             ngx_int_t interval = ngx_parse_time(&s, 0);
             if (interval == NGX_ERROR || !interval) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid value \"%V\" in \"%V\" directive", &value[i], &cmd->name); return NGX_CONF_ERROR; }
             qscf->retry_interval = (ngx_msec_t)interval;
+            continue;
+        }
+        if (value[i].len > sizeof("threshold=") - 1 && !ngx_strncmp(value[i].data, (u_char *)"threshold=", sizeof("threshold=") - 1)) {
+            if (qscf->threshold != NGX_CONF_UNSET_UINT) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "duplicate parameter \"%V\" in \"%V\" directive", &value[i], &cmd->name); return NGX_CONF_ERROR; }
+            ngx_int_t threshold = ngx_atoi(value[i].data + sizeof("threshold=") - 1, value[i].len - (sizeof("threshold=") - 1));
+            if (threshold == NGX_ERROR || !threshold || threshold > 100) { ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid value \"%V\" in \"%V\" directive", &value[i], &cmd->name); return NGX_CONF_ERROR; }
+            qscf->threshold = (ngx_uint_t)threshold;
             continue;
         }
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid name \"%V\" in \"%V\" directive", &value[i], &cmd->name);
@@ -870,7 +917,7 @@ static ngx_http_module_t ngx_http_upstream_queue_ctx = {
 };
 
 static ngx_command_t ngx_http_upstream_queue_commands[] = {
-  { ngx_string("queue"), NGX_HTTP_UPS_CONF|NGX_CONF_TAKE123, ngx_http_upstream_queue_ups_conf, NGX_HTTP_SRV_CONF_OFFSET, 0, NULL },
+  { ngx_string("queue"), NGX_HTTP_UPS_CONF|NGX_CONF_TAKE1234, ngx_http_upstream_queue_ups_conf, NGX_HTTP_SRV_CONF_OFFSET, 0, NULL },
   { ngx_string("queue_detect_all_peer_down"), NGX_HTTP_UPS_CONF|NGX_CONF_FLAG, ngx_conf_set_flag_slot, NGX_HTTP_SRV_CONF_OFFSET, .offset = offsetof(ngx_http_upstream_queue_srv_conf_t, detect), NULL },
     ngx_null_command
 };
